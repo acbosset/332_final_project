@@ -5,6 +5,7 @@ import cv2
 import scipy.misc
 import numpy as np
 import copy
+import math
 
 
 class Stitch:
@@ -21,7 +22,7 @@ def scale_space(img):
         octaves[o] = []
         next_pic = cv2.resize(blur, (0, 0), fx=0.5, fy=0.5)
         for i in range(5):
-            blur = cv2.GaussianBlur(blur, (5, 5), 3)
+            blur = cv2.GaussianBlur(blur, (5, 5), 3) # CHANGE for window size if not 3
             # cv2.imshow('histogram image', blur)
             # cv2.waitKey(0)
             octaves[o].append(blur)
@@ -43,7 +44,7 @@ def d_o_g(octaves):
 def maxima(dog):  # returns list of lists
     maxima_octaves = []
     for i in range(len(dog)):
-        print "octave ", i
+        # print "octave ", i
         octave = dog[i]
         maxima_img = []
         for img_num in range(1, len(octave) - 1):
@@ -69,7 +70,41 @@ def maxima(dog):  # returns list of lists
                         img[x][j] = 255
             maxima_img.append(img)
         maxima_octaves.append(maxima_img)
+        print(maxima_octaves)
     return maxima_octaves
+
+# NEED TO CONSOL INTO ONE IMAGE OF KEYPOINTS WITH INTENSITIES OF OTHER PIXELS
+
+def linapprox(img, x, y):
+    return img[x][y] + (img[x][y+1] - img[x][y-1])*2 + (img[x+1][y] - img[x-1][y])*2
+
+def magnitude(img, x, y):
+    return math.sqrt(math.pow((linapprox(img, x+1, y) - linapprox(img, x-1, y)), 2) + math.pow((linapprox(img, x, y+1) - linapprox(img, x, y-1)), 2))
+
+def orientation(img, x, y):
+    return math.atan((linapprox(img, x, y+1) - linapprox(img, x, y-1)) / (linapprox(img, x+1, y) - linapprox(img, x-1, y)))
+
+# could pass a list of keypoint locations or just an image with keypoints and an original intensity image
+def keypointorientations(img, img_keypts):
+    # find keypoints
+    np.histogarm(
+    for key in keypoints:
+        # get key x,y
+        for x in range(key_x - 1,key_x + 2):
+            for y in range(key_y - 1, key_y + 2):
+                m = magnitude(img, x, y)
+                o = orientation(img, x, y)
+                 # add mag to histogram in bin corr to orientation
+
+
+# window size = 5x5 * 1.5*simga
+# go to each keypoint, look at a window of 5x5 * 1.5sigma and calculate orientation and mag for each
+# make histogram of mag * orientation, 36 bins for degrees
+# check if any other peaks @ at least 80% of highest peak
+# assign orientation to bin #
+
+
+
 
 
 if __name__ == '__main__':
@@ -95,7 +130,7 @@ if __name__ == '__main__':
     for i in range(len(max_octaves)):
         octave = max_octaves[i]
         dst_imgs = []
-        print "range octave", len(octave)
+        #print "range octave", len(octave)
         for img_num in range(len(octave)):
             img = copy.deepcopy(octave[img_num])
             dst = cv2.cornerHarris(img, 2, 3, 0.04)

@@ -46,18 +46,29 @@ def maxima(dog):  # returns list of lists
         keypoints = []
         for img_num in range(1, len(octave) - 1):
             img = copy.deepcopy(octave[img_num])
-            img = cv2.cornerHarris(img, 2, 3, 0.04)
-            ret, img = cv2.threshold(img, 0.01 * img.max(), 255, 0)
+            maximas = np.zeros((img.shape[0], img.shape[1]))
+            # img = cv2.cornerHarris(img, 2, 3, 0.04)
+            # img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_32FC1, None)
+            ret, img = cv2.threshold(img, 1, 255, cv2.THRESH_TOZERO)
+            print "shape[0]:", img.shape[0]
+            print "shape[1]", img.shape[1]
             for x in range(1, img.shape[0] - 1):
+                # print"x", x
                 for j in range(1, img.shape[1] - 1):
+                    # print "y", j
                     max_pix = True
                     pix = img[x][j]
+                    # if x > img.shape[1]:
+                    #     print "pixel value", pix
                     # just comparing to pixel
                     for new_pic in range(-1, 2):
                         comp_pix = octave[img_num + new_pic]
                         for xp in range(3):
                             for yp in range(3):
                                 if pix < comp_pix[x - 1 + xp][j - 1 + yp]:
+                                    # if x > img.shape[1]:
+                                        # print "pixel value", pix
+                                        # print "comp pix", comp_pix[x - 1 + xp][j - 1 + yp]
                                     max_pix = False
                                     break
                             if not max_pix:
@@ -65,11 +76,13 @@ def maxima(dog):  # returns list of lists
                         if not max_pix:
                             break
                     if max_pix and img[x][j] != 0:
-                        keypoints.append((x, j))
-                        img[x][j] = 255
+                        # if x > img.shape[1]:
+                        keypoints.append((j, x))
+                        maximas[x][j] = 255
 
             maxima_imgs.append(img)
         octave_keypoints.append(list(set(keypoints)))
+        # add a
         maxima_images_octaves.append(maxima_imgs)
         print "length of keypoints for each octave", len(keypoints)
     print "length of octave_keypoints", len(octave_keypoints)
@@ -100,37 +113,36 @@ def image_gradient(img):
     y = cv2.filter2D(img, cv2.CV_32F, kernel=gy)
     mags = np.hypot(x, y)
     thetas = np.rad2deg(np.arctan2(y, x))
-    # thetas = np.rad2deg(np.arctan(np.divide(y, x)))
     return mags, thetas
 
 
 def create_keypoints(keypoints_octaves, img):
     octave_num = 0
-    new_sigma = 1.5 * 2
-    img = cv2.GaussianBlur(img, (5, 5), new_sigma)
-    mags, thetas = image_gradient(img)
-    window_size = int(5 * new_sigma)
-    wind = int(window_size / 2)
+    #img = cv2.GaussianBlur(img, (5, 5), 1.5 * 2)
+    first_mags, thetas = image_gradient(img)
     kps = []
     for keypoints in keypoints_octaves:
+        new_sigma = 2 ** (octave_num) * 1.5
+        mags = cv2.GaussianBlur(first_mags, (5, 5), new_sigma)
+        window_size = int(5 * new_sigma)
+        wind = int(window_size / 2)
         for idx in keypoints:
             idx_histogram = [0] * 36
             key_x = idx[0]
             key_y = idx[1]
-            # for x in range(key_x - wind, key_x + wind + 1):
-            #     for y in range(key_y - wind, key_y + wind + 1):
-            # if x < img.shape[0] - 2 and y < img.shape[1] - 2:
-            m = mags[key_x][key_y]
-            o = thetas[key_x][key_y]
-            bin = int(math.floor(o / 10)) + 18
-            print bin
-            idx_histogram[bin] = idx_histogram[bin] + m
+            for x in range(key_x - wind, key_x + wind + 1):
+                for y in range(key_y - wind, key_y + wind + 1):
+                    if x < img.shape[0] and y < img.shape[1]:
+                        m = mags[x][y]
+                        o = thetas[x][y]
+                        bin = int(math.floor(o / 10)) + 18
+                        idx_histogram[bin] = idx_histogram[bin] + m
 
             hist = idx_histogram
             angle = idx_histogram.index(max(idx_histogram)) * 10 + 5
             hist_max = max(idx_histogram)
-            #del hist[hist.index(hist_max)]
-            kp = cv2.KeyPoint(key_x, key_y, window_size, _angle=angle, _octave=octave_num)
+            # del hist[hist.index(hist_max)]
+            kp = cv2.KeyPoint(key_x, key_y, window_size, _angle=angle, _octave=3 - octave_num)
             kps.append(kp)
             # while(max(hist) / float(hist_max) > .8 and hist_max != 0):
             #     print hist
@@ -191,7 +203,9 @@ def start(img):
     octs = scale_space(img)
     dogs = d_o_g(octs)
     keypoint_imgs, keypoints = maxima(dogs)
+
     kps = create_keypoints(keypoints, img)
     sift = cv2.xfeatures2d.SIFT_create()
+    # img = cv2.GaussianBlur(img, (5, 5), 3)
     kps, des = sift.compute(img,  kps)
     return kps, des

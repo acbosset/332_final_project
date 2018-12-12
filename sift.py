@@ -5,13 +5,7 @@ import cv2
 import scipy.misc
 import numpy as np
 import copy
-
-
-class Stitch:
-    def __init__(self):
-        pass
-
-# sift step 1
+import math
 
 
 def scale_space(img):
@@ -21,7 +15,7 @@ def scale_space(img):
         octaves[o] = []
         next_pic = cv2.resize(blur, (0, 0), fx=0.5, fy=0.5)
         for i in range(5):
-            blur = cv2.GaussianBlur(blur, (5, 5), 3)
+            blur = cv2.GaussianBlur(blur, (5, 5), 2)
             # cv2.imshow('histogram image', blur)
             # cv2.waitKey(0)
             octaves[o].append(blur)
@@ -39,15 +33,21 @@ def d_o_g(octaves):
 
     return dog
 
+# maybe filter here for the intensity
+
 
 def maxima(dog):  # returns list of lists
-    maxima_octaves = []
+    maxima_images_octaves = []
+    octave_keypoints = []
     for i in range(len(dog)):
         print "octave ", i
         octave = dog[i]
-        maxima_img = []
+        maxima_imgs = []
+        keypoints = []
         for img_num in range(1, len(octave) - 1):
             img = copy.deepcopy(octave[img_num])
+            img = cv2.cornerHarris(img, 2, 3, 0.04)
+            ret, img = cv2.threshold(img, 0.01 * img.max(), 255, 0)
             for x in range(1, img.shape[0] - 1):
                 for j in range(1, img.shape[1] - 1):
                     max_pix = True
@@ -58,7 +58,6 @@ def maxima(dog):  # returns list of lists
                         for xp in range(3):
                             for yp in range(3):
                                 if pix < comp_pix[x - 1 + xp][j - 1 + yp]:
-                                    img[x][j] = 0
                                     max_pix = False
                                     break
                             if not max_pix:
@@ -66,62 +65,133 @@ def maxima(dog):  # returns list of lists
                         if not max_pix:
                             break
                     if max_pix and img[x][j] != 0:
+                        keypoints.append((x, j))
                         img[x][j] = 255
-            maxima_img.append(img)
-        maxima_octaves.append(maxima_img)
-    return maxima_octaves
+
+            maxima_imgs.append(img)
+        octave_keypoints.append(list(set(keypoints)))
+        maxima_images_octaves.append(maxima_imgs)
+        print "length of keypoints for each octave", len(keypoints)
+    print "length of octave_keypoints", len(octave_keypoints)
+    return maxima_images_octaves, octave_keypoints
 
 
-if __name__ == '__main__':
-    try:
-        image_file = sys.argv[1]
-    except:
-        image_file = "test_images"
+def linapprox(img, x, y):
+    return img[x][y] + (img[x][y + 1] - img[x][y - 1]) * 2 + (img[x + 1][y] - img[x - 1][y]) * 2
 
-    testing_dir = os.getcwd() + "/" + image_file
-    test_path = os.path.join(testing_dir, '*')
-    images = glob.glob(test_path)
-    test_images = []
-    for i in images:
-        img = cv2.imread(i, cv2.IMREAD_GRAYSCALE)
-        img = cv2.resize(img, (0, 0), fx=0.3, fy=0.3)
-        test_images.append(img)
 
-    octs = scale_space(test_images[0])
+def magnitude(img, x, y):
+    return math.sqrt(math.pow((linapprox(img, x + 1, y) - linapprox(img, x - 1, y)), 2) + math.pow((linapprox(img, x, y + 1) - linapprox(img, x, y - 1)), 2))
+
+
+def orientation(img, x, y):
+    return math.atan((linapprox(img, x, y + 1) - linapprox(img, x, y - 1)) / (linapprox(img, x + 1, y) - linapprox(img, x - 1, y)))
+
+# could pass a list of keypoint locations or just an image with keypoints and an original intensity image
+
+
+def image_gradient(img):
+
+    gx = np.array([[1, 0, -1], [2, 0, -2], [1, 0, -1]])
+    # Define kernel for y differences
+    gy = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
+
+    x = cv2.filter2D(img, cv2.CV_32F, kernel=gx)
+    y = cv2.filter2D(img, cv2.CV_32F, kernel=gy)
+    mags = np.hypot(x, y)
+    thetas = np.rad2deg(np.arctan2(y, x))
+    # thetas = np.rad2deg(np.arctan(np.divide(y, x)))
+    return mags, thetas
+
+
+def create_keypoints(keypoints_octaves, img):
+    octave_num = 0
+    new_sigma = 1.5 * 2
+    img = cv2.GaussianBlur(img, (5, 5), new_sigma)
+    mags, thetas = image_gradient(img)
+    window_size = int(5 * new_sigma)
+    wind = int(window_size / 2)
+    kps = []
+    for keypoints in keypoints_octaves:
+        for idx in keypoints:
+            idx_histogram = [0] * 36
+            key_x = idx[0]
+            key_y = idx[1]
+            # for x in range(key_x - wind, key_x + wind + 1):
+            #     for y in range(key_y - wind, key_y + wind + 1):
+            # if x < img.shape[0] - 2 and y < img.shape[1] - 2:
+            m = mags[key_x][key_y]
+            o = thetas[key_x][key_y]
+            bin = int(math.floor(o / 10)) + 18
+            print bin
+            idx_histogram[bin] = idx_histogram[bin] + m
+
+            hist = idx_histogram
+            angle = idx_histogram.index(max(idx_histogram)) * 10 + 5
+            hist_max = max(idx_histogram)
+            #del hist[hist.index(hist_max)]
+            kp = cv2.KeyPoint(key_x, key_y, window_size, _angle=angle, _octave=octave_num)
+            kps.append(kp)
+            # while(max(hist) / float(hist_max) > .8 and hist_max != 0):
+            #     print hist
+            #     hist_val = hist.pop(hist.index(max(hist)))
+            #     angle = idx_histogram.index(hist_val)
+            #     kp = cv2.KeyPoint(x, y, window_size, _angle=angle, _octave=octave_num)
+        octave_num = octave_num + 1
+    print "feature points selected", (len(kps))
+    return kps
+
+# for testing sift algorithm
+# if __name__ == '__main__':
+#     try:
+#         image_file = sys.argv[1]
+#     except:
+#         image_file = "test_images"
+#
+#     testing_dir = os.getcwd() + "/" + image_file
+#     test_path = os.path.join(testing_dir, '*')
+#     images = glob.glob(test_path)
+#     gray_images = []
+#
+#     for i in images:
+#         img = cv2.imread(i, cv2.IMREAD_GRAYSCALE)
+#         img = cv2.resize(img, (0, 0), fx=0.1, fy=0.1)
+#         gray_images.append(img)
+#
+#     octs = scale_space(gray_images[0])
+#     dogs = d_o_g(octs)
+#     keypoint_imgs, keypoints = maxima(dogs)
+#     kps = create_keypoints(keypoints, gray_images[0])
+#     sift = cv2.xfeatures2d.SIFT_create()
+#     kps, des = sift.compute(gray_images[0],  kps)
+    # i = 0
+    # for im in octs[1]:
+    #     cv2.imshow('scale_space', im)
+    #     # cv2.imwrite("scale space" + str(i) + ".jpg", im)
+    #     cv2.waitKey(0)
+    #     i = i + 1
+    #
+    # i = 0
+    # for im in dogs[1]:
+    #     cv2.imshow('gauss diff', im)
+    #     # cv2.imwrite("gaussian_diff_" + str(i) + ".jpg", im)
+    #     cv2.waitKey(0)
+    #     i = i + 1
+    # i = 0
+    # for im in dst_octaves[1]:
+    #     cv2.imshow('dst image', im)
+    #     # cv2.imwrite("maxima_corners" + str(i) + ".jpg", im)
+    #     cv2.waitKey(0)
+    #     i = i + 1
+
+
+def start(img):
+    # img = cv2.resize(img, (0, 0), fx=0.1, fy=0.1)
+
+    octs = scale_space(img)
     dogs = d_o_g(octs)
-    max_octaves = maxima(dogs)
-
-    dst_octaves = []
-    for i in range(len(max_octaves)):
-        octave = max_octaves[i]
-        dst_imgs = []
-        print "range octave", len(octave)
-        for img_num in range(len(octave)):
-            img = copy.deepcopy(octave[img_num])
-            dst = cv2.cornerHarris(img, 2, 3, 0.04)
-            ret, dst = cv2.threshold(dst, 0.01 * dst.max(), 255, 0)
-            dst_imgs.append(dst)
-        dst_octaves.append(dst_imgs)
-    # print dst_octaves.shape
-
-    i = 0
-    for im in octs[1]:
-        cv2.imshow('scale_space', im)
-        # cv2.imwrite("scale space" + str(i) + ".jpg", im)
-        cv2.waitKey(0)
-        i = i + 1
-
-    i = 0
-    for im in dogs[1]:
-        cv2.imshow('gauss diff', im)
-        # cv2.imwrite("gaussian_diff_" + str(i) + ".jpg", im)
-        cv2.waitKey(0)
-        i = i + 1
-    i = 0
-    for im in dst_octaves[1]:
-        cv2.imshow('dst image', im)
-        # cv2.imwrite("maxima_corners" + str(i) + ".jpg", im)
-        cv2.waitKey(0)
-        i = i + 1
-
-    cv2.destroyAllWindows()
+    keypoint_imgs, keypoints = maxima(dogs)
+    kps = create_keypoints(keypoints, img)
+    sift = cv2.xfeatures2d.SIFT_create()
+    kps, des = sift.compute(img,  kps)
+    return kps, des
